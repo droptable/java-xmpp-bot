@@ -3,3 +3,5 @@ assets/
 .classpath
 .project
 .settings
+
+/src/Main.java
