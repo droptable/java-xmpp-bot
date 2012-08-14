@@ -1,21 +1,33 @@
-package ws.raidrush.xmpp;
+package ws.raidrush.xmpp.handler;
+
+import java.util.Stack;
 
 import org.jivesoftware.smack.Chat;
 import org.jivesoftware.smack.ChatManagerListener;
 import org.jivesoftware.smack.MessageListener;
 import org.jivesoftware.smack.packet.Message;
 
-public class UserChatHandler implements ChatManagerListener, MessageListener 
+import ws.raidrush.xmpp.Client;
+import ws.raidrush.xmpp.Logger;
+import ws.raidrush.xmpp.Plugin;
+
+public class ChatQuery implements ChatManagerListener, MessageListener 
 {
   // our <master>
   protected Client client;
+  
+  // chat-messages can not handle filters, since
+  // commands are executed without a trigger.
+  
+  // note: query-commands are global!
+  protected Stack<Plugin> plugins;
   
   /**
    * constructor
    * 
    * @param client
    */
-  public UserChatHandler(Client client)
+  public ChatQuery(Client client)
   {
     this.client = client;
   }

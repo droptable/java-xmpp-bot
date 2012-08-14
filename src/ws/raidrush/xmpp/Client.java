@@ -3,7 +3,8 @@ package ws.raidrush.xmpp;
 import java.util.Stack;
 import java.util.HashMap;
 
-import ws.raidrush.xmpp.RoomChatHandler;
+import ws.raidrush.xmpp.handler.ChatRoom;
+import ws.raidrush.xmpp.handler.ChatQuery;
 
 import org.jivesoftware.smack.Roster;
 import org.jivesoftware.smack.XMPPConnection;
@@ -20,7 +21,7 @@ public class Client
   protected XMPPConnection xmpp;
   
   // our chat rooms
-  protected HashMap<String, RoomChatHandler> mucs;
+  protected HashMap<String, ChatRoom> mucs;
   protected HashMap<String, String>        nicks;
   
   // some informations about this client
@@ -55,7 +56,7 @@ public class Client
     this.auth = auth;
     this.pass = pass;
     
-    this.mucs  = new HashMap<String, RoomChatHandler>();
+    this.mucs  = new HashMap<String, ChatRoom>();
     this.nicks = new HashMap<String, String>();
     this.queue = new Stack<Runnable>();
     
@@ -67,7 +68,7 @@ public class Client
     this.xmpp.getRoster().setSubscriptionMode(Roster.SubscriptionMode.accept_all);
     
     // handle private messages
-    this.xmpp.getChatManager().addChatListener(new UserChatHandler(this));
+    this.xmpp.getChatManager().addChatListener(new ChatQuery(this));
   }
   
   /**
@@ -196,8 +197,8 @@ public class Client
       @Override 
       public void run() 
       {
-        MultiUserChat   muc = new MultiUserChat(xmpp, room);
-        RoomChatHandler rmh = new RoomChatHandler(self, muc, nick, trigger);
+        MultiUserChat muc = new MultiUserChat(xmpp, room);
+        ChatRoom      rmh = new ChatRoom(self, muc, nick, trigger);
         
         muc.addMessageListener(rmh);
         

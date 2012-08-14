@@ -25,7 +25,7 @@ public class Main
     Client client;
     
     try {
-      client = new Client(...);
+      client = new Client("quote2", "geheim1234", "jabber.ccc.de", 5222);
       client.connect();
     } catch (Exception e) {
       Logger.error(e.getMessage());
@@ -37,7 +37,7 @@ public class Main
     
     client
       .join("#rr-coding@conference.jabber.ccc.de", "!")
-      .join("#raidrush@conference.jabber.ccc.de", "!")
+      .join("#raidrush@conference.jabber.ccc.de", "!", "~rrbot")
       .listen();
   }
 }
