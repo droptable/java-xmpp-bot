@@ -40,10 +40,14 @@ public class ChatQuery implements ChatManagerListener, MessageListener
     Logger.info("got a message from: " + user + ": " + body);
     
     String exec = body.substring(0, body.indexOf(" ")).toLowerCase();
+    
+    long start = System.currentTimeMillis();
     Plugin plugin = Plugin.get(exec, Plugin.Type.ACTIVE);
     
     if (plugin != null)
       this.execute(plugin, msg, body.substring(body.indexOf(" ") + 1), chat);
+    
+    Logger.info("" + (System.currentTimeMillis() - start));
   }
 
   /**

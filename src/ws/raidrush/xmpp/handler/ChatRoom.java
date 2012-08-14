@@ -53,6 +53,7 @@ public class ChatRoom implements PacketListener
     this.commands = new HashSet<String>();
     
     this.commands.add("echo");
+    this.commands.add("quote");
     
     Logger.info("handler for room " + this.room.getRoom() + " created");
   }
@@ -78,10 +79,14 @@ public class ChatRoom implements PacketListener
       Logger.info("is this a trigger? '" + pre + "'");
       
       if (pre.equals(this.trigger)) {
-        String exec = body.substring(this.tlength, body.indexOf(" ")).toLowerCase();
+        int split = body.indexOf(" ");
+        if (split == -1) split = body.length();
+        
+        String exec = body.substring(this.tlength, split).toLowerCase(),
+               rest = body.substring(exec.length() + this.tlength);
         
         if (exec.equals("load")) {
-          Plugin.load(body.substring(body.indexOf(" ") + 1).trim());
+          Plugin.load(rest);
           return;
         }
         
@@ -94,7 +99,7 @@ public class ChatRoom implements PacketListener
           
           if (cmd != null) {
             Logger.info("plugin is ready!");
-            this.execute(cmd, msg, body.substring(body.indexOf(" ") + 1));
+            this.execute(cmd, msg, rest);
             return;
           }
         }

@@ -214,7 +214,13 @@ abstract public class Plugin
     if (!buf.isEmpty())
       args.add(buf);
     
-    return (String[]) args.toArray();
+    int l = args.size();
+    String[] res = new String[l];
+    
+    for (int i = 0; i < l; ++i)
+      res[i] = args.get(i);
+    
+    return res;
   }
   
   /**
