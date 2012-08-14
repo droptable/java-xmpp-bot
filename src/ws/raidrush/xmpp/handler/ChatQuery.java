@@ -39,13 +39,17 @@ public class ChatQuery implements ChatManagerListener, MessageListener
     String user = chat.getParticipant();    
     Logger.info("got a message from: " + user + ": " + body);
     
-    String exec = body.substring(0, body.indexOf(" ")).toLowerCase();
+    int split = body.indexOf(" ");
+    if (split == -1) split = body.length();
+    
+    String exec = body.substring(0, split).toLowerCase(),
+           rest = body.substring(exec.length());
     
     long start = System.currentTimeMillis();
     Plugin plugin = Plugin.get(exec, Plugin.Type.ACTIVE);
     
     if (plugin != null)
-      this.execute(plugin, msg, body.substring(body.indexOf(" ") + 1), chat);
+      this.execute(plugin, msg, rest, chat);
     
     Logger.info("" + (System.currentTimeMillis() - start));
   }

@@ -22,7 +22,7 @@ public class Client
   
   // our chat rooms
   protected HashMap<String, ChatRoom> mucs;
-  protected HashMap<String, String>        nicks;
+  protected HashMap<String, String>   nicks;
   
   // some informations about this client
   protected String user, pass, auth;
@@ -62,6 +62,8 @@ public class Client
     
     // prepare connection
     ConnectionConfiguration config = new ConnectionConfiguration(auth, port);
+    // config.setSendPresence(true);
+    
     this.xmpp = new XMPPConnection(config);
     
     // auto-subscribes to everything, because we love you all :-D
@@ -71,13 +73,16 @@ public class Client
     this.xmpp.getChatManager().addChatListener(new ChatQuery(this));
   }
   
+  public XMPPConnection getXMPP() { return this.xmpp; }
+  public String getUser() { return this.user; }
+  
   /**
    * trys to find the JID from a user an a room
    * 
    * @param nick
    * @param room
    */
-  public synchronized String getUserJid(String nick, String room)
+  public String getUserJid(String nick, String room)
   {
     Logger.info("fetching jid for " + nick + " in room " + room);
     
@@ -90,6 +95,42 @@ public class Client
     }
     
     return this.mucs.get(room).getUserJid(nick);
+  }
+  
+  /**
+   * trys to find the JID from a user in the contact-manager
+   * 
+   * @param nick
+   * @return String
+   */
+  public String getUserJid(String nick)
+  {
+    // remove resource
+    int res = nick.indexOf("/");
+    if (res > -1) nick = nick.substring(0, res);
+    
+    Logger.info("fetching jid for " + nick);
+    
+    Roster roster = this.xmpp.getRoster();
+    
+    if (!roster.contains(nick))
+      return null;
+    
+    return roster.getEntry(nick).getUser();
+  }
+  
+  /**
+   * returns a joined room
+   * 
+   * @param room
+   * @return ChatRoom
+   */
+  public ChatRoom getRoom(String room)
+  {
+    if (this.mucs.containsKey(room))
+      return this.mucs.get(room);
+    
+    return null;
   }
   
   /**
@@ -150,19 +191,39 @@ public class Client
   }
   
   /**
-   * forwarded to {@link Client#join(String, String)}
+   * leaves a chat-room
+   * 
+   * @param room
+   */
+  public Client leave(MultiUserChat room)
+  {
+    String name = room.getRoom();
+    Logger.info("leaving " + name);
+    
+    if (!this.mucs.containsKey(name))
+      return this;
+    
+    room.removeMessageListener(this.mucs.get(name));
+    room.leave();
+    
+    this.mucs.remove(name);
+    return this;
+  }
+  
+  /**
+   * forwarded to {@link Client#join(String, String, String, String)}
    * 
    * @param room
    * @return Client
    */
   public Client join(String room, String trigger)
   {
-    join(room, trigger, this.user);
+    join(room, trigger, this.user, "");
     return this;
   }
   
   /**
-   * forwarded to {@link Client#join(String, String, String)}
+   * forwarded to {@link Client#join(String, String, String, String)}
    * 
    * @param room
    * @param nick
@@ -170,7 +231,7 @@ public class Client
    */
   public Client join(String room, String trigger, String nick)
   {
-    this.join(room, trigger, nick, "");
+    join(room, trigger, nick, "");
     return this;
   }
   
@@ -182,7 +243,7 @@ public class Client
    * @param pass
    * @return Client
    */
-  public Client join(final String room, final String trigger, final String nick, final String pass)
+  public synchronized Client join(final String room, final String trigger, final String nick, final String pass)
   {
     if (mucs.containsKey(room)) {
       Logger.info("already joined muc " + room + " with nick \"" 
@@ -207,12 +268,13 @@ public class Client
         try {
           DiscussionHistory dh = new DiscussionHistory();
           dh.setMaxChars(0);
-          
           muc.join(nick, pass, dh, 20);
-          Logger.info("joined room " + room);
         } catch (XMPPException e) {
           Logger.warn("unable to join muc " + room);
           Logger.warn(e.getMessage());
+          return;
+        } finally {        
+          Logger.info("joined room " + room);
         }
       }
     };
@@ -287,7 +349,7 @@ public class Client
             break;
           
           try {
-            Thread.sleep(10);
+            Thread.sleep(10000);
           } catch (InterruptedException e) {
             Logger.fatal("unable to sleep! i need a break, good bye");
             return;
@@ -302,20 +364,22 @@ public class Client
         if (self.reconnect == true) {
           boolean okay = false;
           
+          Logger.info("trying to reconnect");
+          
           for (int i = 0; i < 10; ++i) {
             try {
               self.connect();
               okay = true;
               break;
             } catch (XMPPException e) {
-              int next = 10 * i;
+              int next = 10000 * i;
               Logger.warn("reconnect failed, waiting " + next + " seconds for next attempt");
               
               try {
                 Thread.sleep(next);
               } catch (InterruptedException e1) {
                 Logger.fatal("unable to sleep");
-                break;
+                return;
               }
             }
           }

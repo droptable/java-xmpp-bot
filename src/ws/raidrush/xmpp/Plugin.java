@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 
 import org.jivesoftware.smack.Chat;
+import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smackx.muc.MultiUserChat;
 
@@ -148,8 +149,8 @@ abstract public class Plugin
    * @param c   the chat-room (MultiUserChat / Chat)
    * @param r   the room / query (origin)
    */
-  abstract public void execute(Message p, String m, MultiUserChat c, ChatRoom r);
-  abstract public void execute(Message p, String m, Chat c, ChatQuery q);
+  abstract public void execute(Message msg, String body, MultiUserChat chat, ChatRoom room);
+  abstract public void execute(Message msg, String body, Chat chat, ChatQuery query);
   
   // should return the type of this plugin
   abstract public Type getType();
@@ -160,6 +161,38 @@ abstract public class Plugin
    * @return
    */
   public String getMeta() { return "No Informations available"; }
+  
+  /**
+   * sends a message to the query
+   * 
+   * @param msg
+   * @param chat
+   * @param text
+   */
+  protected void respond(Chat chat, String text)
+  {
+    try {
+      chat.sendMessage(text);
+    } catch (XMPPException e) {
+      // noop
+    }
+  }
+  
+  /**
+   * sends a message to the room
+   * 
+   * @param msg
+   * @param chat
+   * @param text
+   */
+  protected void respond(MultiUserChat chat, String text)
+  {
+    try {
+      chat.sendMessage(text);
+    } catch (XMPPException e) {
+      // noop
+    }
+  }
   
   /**
    * parses arguments and returns them as String[]

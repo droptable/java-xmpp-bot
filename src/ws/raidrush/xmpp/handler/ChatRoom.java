@@ -57,7 +57,13 @@ public class ChatRoom implements PacketListener
     
     Logger.info("handler for room " + this.room.getRoom() + " created");
   }
-
+  
+  /**
+   * forwarded to Client#leave(MultiUserChat)
+   * 
+   */
+  public void leave() { this.client.leave(this.room); }
+  
   @Override
   public void processPacket(Packet pack) 
   {
@@ -68,6 +74,8 @@ public class ChatRoom implements PacketListener
     final String body = msg.getBody();
     String from = msg.getFrom();
     
+    Logger.info("" + msg.getType());
+    
     if (from.equals(this.ident))
       return;
     
@@ -76,7 +84,6 @@ public class ChatRoom implements PacketListener
     if (body.length() > this.tlength) {
       // apply trigger (active plugins)
       String pre = body.substring(0, this.tlength);
-      Logger.info("is this a trigger? '" + pre + "'");
       
       if (pre.equals(this.trigger)) {
         int split = body.indexOf(" ");
@@ -179,7 +186,7 @@ public class ChatRoom implements PacketListener
    * @param nick
    * @return String
    */
-  public synchronized String getUserJid(String nick)
+  public String getUserJid(String nick)
   {
     if (nick.indexOf("/") == -1)
       nick = this.getRoom() + "/" + nick;
