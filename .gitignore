@@ -1,0 +1,5 @@
+bin/
+assets/
+.classpath
+.project
+.settings
