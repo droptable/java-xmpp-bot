@@ -8,7 +8,7 @@ import ws.raidrush.xmpp.Client;
 import ws.raidrush.xmpp.handler.ChatQuery;
 import ws.raidrush.xmpp.handler.ChatRoom;
 
-public class Leave extends Join
+public class Leave extends Admin
 {
   public Leave() {}
   
@@ -18,30 +18,30 @@ public class Leave extends Join
     String[] args = parseArguments(body);
     
     if (args.length != 1) {
-      respond(chat, "missing arguments: leave <room>");
+      respond(chat, "Fehlende Parameter: leave <room>");
       return;
     }
     
     // setup
-    String nick = msg.getFrom(),
-           jid  = query.getClient().getUserJid(nick);
+    String jid = getJidFromContact(msg.getFrom(), chat, query);
+    if (jid == null) return;
     
     Client client = query.getClient();
     ChatRoom room = client.getRoom(args[0]);
     
     if (room == null) {
-      respond(chat, "i am not in that channel!");
+      respond(chat, "Ich bin gar nicht in diesem Chatraum!");
       return;
     }
     
     MultiUserChat muc = room.getChat();
     
     if (!isModerator(muc, jid)) {
-      respond(chat, "you are not a channel moderator/admin/owner. ask a staff member!");
+      respond(chat, "Du bist kein Moderator in diesem Chatraum!");
       return;
     }
     
-    room.leave();
-    respond(chat, "left channel");
+    room.leave();    
+    respond(chat, "Chatraum verlassen.");
   }  
 }

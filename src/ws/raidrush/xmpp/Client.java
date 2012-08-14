@@ -156,6 +156,16 @@ public class Client
   }
   
   /**
+   * adds a task
+   * 
+   * @param task
+   */
+  public void addTask(Runnable task)
+  {
+    this.queue.add(task);
+  }
+  
+  /**
    * forwarded to {@link XMPPConnection#connect()}
    * 
    * @throws XMPPException
@@ -173,6 +183,8 @@ public class Client
    */
   public void disconnect(String msg)
   {
+    Logger.info("disconnecting (shutdown)");
+    
     this.shutdown = true;
     
     if (this.master != null)
@@ -199,12 +211,18 @@ public class Client
   {
     String name = room.getRoom();
     Logger.info("leaving " + name);
+    Logger.info("a = joined: " + (room.isJoined() ? "a" : "b"));
     
     if (!this.mucs.containsKey(name))
       return this;
     
-    room.removeMessageListener(this.mucs.get(name));
-    room.leave();
+    //room.removeMessageListener(this.mucs.get(name));
+    
+    try {
+      room.leave();
+    } catch (Exception e) {
+      System.out.println(e.getMessage());
+    }
     
     this.mucs.remove(name);
     return this;
@@ -268,10 +286,10 @@ public class Client
         try {
           DiscussionHistory dh = new DiscussionHistory();
           dh.setMaxChars(0);
-          muc.join(nick, pass, dh, 20);
+          muc.join(nick, pass, dh, 2000);
         } catch (XMPPException e) {
-          Logger.warn("unable to join muc " + room);
-          Logger.warn(e.getMessage());
+          Logger.error("unable to join muc " + room);
+          Logger.error(e.getMessage());
           return;
         } finally {        
           Logger.info("joined room " + room);

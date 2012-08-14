@@ -39,6 +39,16 @@ abstract public class Plugin
    */
   public Plugin() { }
   
+  public static Plugin get(String name)
+  {
+    Plugin plugin = get(name, Type.ACTIVE);
+    
+    if (plugin != null)
+      return plugin;
+    
+    return get(name, Type.PASSIVE);
+  }
+  
   public static Plugin get(String name, Type type)
   {
     if (lookup.contains(name))

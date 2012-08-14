@@ -52,9 +52,6 @@ public class ChatRoom implements PacketListener
     this.filters  = new HashSet<String>();
     this.commands = new HashSet<String>();
     
-    this.commands.add("echo");
-    this.commands.add("quote");
-    
     Logger.info("handler for room " + this.room.getRoom() + " created");
   }
   
@@ -63,6 +60,46 @@ public class ChatRoom implements PacketListener
    * 
    */
   public void leave() { this.client.leave(this.room); }
+  
+  /**
+   * enables a plugin for this room
+   * 
+   * @param plugin
+   * @return
+   */
+  public boolean enable(String plugin)
+  {
+    Plugin p = Plugin.get(plugin);
+    
+    if (p == null) return false;
+    
+    if (p.getType() == Plugin.Type.ACTIVE)
+      this.commands.add(plugin);
+    else
+      this.filters.add(plugin);
+    
+    return true;
+  }
+  
+  /**
+   * disables a plugin for this room
+   * 
+   * @param plugin
+   * @return
+   */
+  public boolean disable(String plugin)
+  {
+    if (!this.commands.contains(plugin)) {
+      if (!this.filters.contains(plugin))
+        return false;
+      
+      this.filters.remove(plugin);
+      return true;
+    }
+    
+    this.commands.remove(plugin);
+    return true;
+  }
   
   @Override
   public void processPacket(Packet pack) 
@@ -86,23 +123,20 @@ public class ChatRoom implements PacketListener
       String pre = body.substring(0, this.tlength);
       
       if (pre.equals(this.trigger)) {
-        int split = body.indexOf(" ");
-        if (split == -1) split = body.length();
+        String line = body.substring(this.tlength).trim();
         
-        String exec = body.substring(this.tlength, split).toLowerCase(),
-               rest = body.substring(exec.length() + this.tlength);
+        int split = line.indexOf(" ");
+        if (split == -1) split = line.length();
         
-        if (exec.equals("load")) {
-          Plugin.load(rest);
-          return;
-        }
+        String exec = line.substring(0, split).toLowerCase().trim(),
+               rest = line.substring(exec.length()).trim();
         
         Logger.info("check if plugin is registred in this chat: '" + exec + "'");
         
         if (this.commands.contains(exec)) {
           Logger.info("command is available!");
           
-          final Plugin cmd = Plugin.get(exec, Plugin.Type.ACTIVE);
+          Plugin cmd = Plugin.get(exec, Plugin.Type.ACTIVE);
           
           if (cmd != null) {
             Logger.info("plugin is ready!");
