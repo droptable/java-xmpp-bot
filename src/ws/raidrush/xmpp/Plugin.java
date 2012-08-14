@@ -1,145 +1,246 @@
 package ws.raidrush.xmpp;
 
+import java.util.Stack;
+import java.util.HashMap;
+import java.util.HashSet;
+
 import org.jivesoftware.smack.Chat;
 import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smackx.muc.MultiUserChat;
 
-import ws.raidrush.xmpp.plugin.PluginInformation;
-import ws.raidrush.xmpp.plugin.PluginActivationRule;
+import ws.raidrush.xmpp.handler.ChatRoom;
+import ws.raidrush.xmpp.handler.ChatQuery;
 
-/**
- * 
- * @author Alex²
- *
- */
-public abstract class Plugin {
-
-  private PluginInformation pluginInformation;
-
-  private PluginActivationRule activationRule;
+abstract public class Plugin 
+{
+  public enum Type {
+    ACTIVE,
+    PASSIVE
+  }
   
-  @SuppressWarnings("unused")
-  private final Client client;
+  // lookup cache
+  protected static HashSet<String> 
+    lookup = new HashSet<String>();
   
-  private final Chat chat;
-
-  private final MultiUserChat room;
-
-  private final Message message;
-
+  // active plugins (key = exec-command!)
+  protected static HashMap<String, Plugin> 
+    active = new HashMap<String, Plugin>();
+  
+  // passive plugins (key = name of plugin)
+  protected static HashMap<String, Plugin> 
+    passive = new HashMap<String, Plugin>();
+  
   /**
-   * @param message
-   *            the message wich triggered the execution of this plugin if
-   *            this is a passive plugin this will be null
-   * @param chat
-   *            should always reference the user who called the plugin. if
-   *            this is a passive plugin this will be null
+   * constructor
+   * 
+   * @param client
    * @param room
-   *            should always reference the room of the user who called the
-   *            plugin. if this is a passive plugin it just contains the room
-   *            it should interact with. if the bot was contacted via room
-   *            unrelated query this will be null
    */
-
-  public Plugin(Client client, Message message, Chat chat, MultiUserChat room) {
-    this.message = message;
-    this.chat = chat;
-    this.room = room;
+  public Plugin() { }
+  
+  public static Plugin get(String name, Type type)
+  {
+    if (lookup.contains(name))
+      return null;
     
-    this.client = client;
-
-    initialise();
-  }
-
-  /**
-   * Method which will be called external to start the plugin execution Note
-   * that plugins will be ran their own thread
-   */
-  public void executePlugin() {
-    Thread pluginThread = new Thread(new Runnable() {
-      @Override
-      public void run() {
-        try {
-          doActions();
-        } catch (Exception e) {
-          Logger.error("Plugin " + pluginInformation.getName() + " caused error");
-          Logger.error(e.getMessage());
-        }
+    if (type == Type.ACTIVE) {
+      Logger.info("searching for plugin " + name + " in the active-stack");
+      
+      if (!active.containsKey(name)) {
+        Logger.info("trying to load it from source");
+        
+        if (load(name) != true) {
+          Logger.info("could not load plugin from source!");
+          lookup.add(name);
+          return null;
+        } 
       }
-    });
-    pluginThread.start();
+      
+      if (!active.containsKey(name)) {
+        Logger.info("plugin not found");
+        lookup.add(name);
+        return null;
+      }
+      
+      Logger.info("plugin found!");
+      return active.get(name);
+    }
+    
+    Logger.info("searching for plugin " + name + " in the passive-stack");
+    if (!passive.containsKey(name)) {
+      Logger.info("trying to load it from source");
+      
+      if (load(name) != true) {
+        Logger.info("could not load plugin from source!");
+        lookup.add(name);
+        return null;
+      } 
+    }
+    
+    if (!passive.containsKey(name)) {
+      Logger.info("plugin not found");
+      lookup.add(name);
+      return null;
+    }
+    
+    Logger.info("plugin found!");
+    return passive.get(name);
   }
-
+  
   /**
-   * This method will be overwritten by the plugin creator
+   * loads a plugin and adds it to the registry
    * 
-   * @throws Exception
-   *             parent exception handling for anything happening here
+   * @param name
+   * @param client
+   * @reutrn true if the plugin was found, false if not
    */
-  protected abstract void doActions() throws Exception;
+  @SuppressWarnings("unchecked")
+  public static boolean load(String name)
+  {
+    Logger.info("loading " + name);
+    
+    String className = pluginToClassName(name, "ws.raidrush.xmpp.plugin");
+    Class<Plugin> pluginClass;
+    
+    Logger.info("loading " + name + " from " + className);
+    
+    try {
+      pluginClass = (Class<Plugin>) ClassLoader.getSystemClassLoader().loadClass(className);
+      Logger.info("loaded plugin " + name + " @ " + className);
+    } catch (ClassNotFoundException e) {
+      Logger.info("unable to load plugin " + name + " @ " + className);
+      return false;
+    }
+    
+    // can this happen?
+    if (pluginClass == null) {
+      Logger.info("unable to load plugin " + name + " @ " + className + " (class-loader returned null)");
+      return false;
+    }
+    
+    Plugin plugin;
+    
+    try {
+      plugin = (Plugin) pluginClass.getConstructors()[0].newInstance();
+    } catch (Exception e) {
+      Logger.info("loaded plugin " + name + " @ " + className + " instance failed!");
+      return false;
+    }
 
-  protected abstract void initialise();
-
-  /**
-   * @return the {@link PluginInformation}
-   */
-  public PluginInformation getPluginInformation() {
-    return pluginInformation;
+    if (plugin.getType() == Type.ACTIVE) {
+      Logger.info("plugin is of type <active>");
+      Plugin.active.put(name, plugin);
+    } else {
+      Logger.info("plugin is of type <passive>");
+      Plugin.passive.put(name, plugin);
+    }
+    
+    Logger.info(plugin.getMeta());
+    
+    return true;
   }
-
+  
   /**
-   * This method should be called at least and only ONCE for the plugin to be
-   * valid.
+   * should execute its action
    * 
-   * @param pluginInformation
-   *            the {@link PluginInformation} to set
+   * @param p   the original message object
+   * @param m   the message-body without trigger 
+   * @param c   the chat-room (MultiUserChat / Chat)
+   * @param r   the room / query (origin)
    */
-  protected void setPluginInformation(PluginInformation pluginInformation) {
-    this.pluginInformation = pluginInformation;
-  }
-
+  abstract public void execute(Message p, String m, MultiUserChat c, ChatRoom r);
+  abstract public void execute(Message p, String m, Chat c, ChatQuery q);
+  
+  // should return the type of this plugin
+  abstract public Type getType();
+  
   /**
-   * This object is for handling chats with single users e.g. the user who
-   * called this plugin to act
+   * Override this method for your own informations
    * 
-   * @return the chat
+   * @return
    */
-  protected Chat getChat() {
-    return chat;
-  }
-
+  public String getMeta() { return "No Informations available"; }
+  
   /**
-   * This object is for handling chat rooms e.g. the room this plugin was
-   * called out of
+   * parses arguments and returns them as String[]
    * 
-   * @return the room
+   * @param text
+   * @return
    */
-  protected MultiUserChat getRoom() {
-    return room;
+  protected final String[] parseArguments(String text)
+  {
+    Stack<String> args = new Stack<String>();
+    
+    int     len = text.length();
+    boolean str = false;
+    String  buf = "";
+    
+    for (int i = 0; i < len; ++i) {
+      char chr = text.charAt(i);
+      
+      if (str == true) {
+        if (chr == '"') {
+          str = false;
+          continue;
+        }
+        
+        buf += chr;
+        continue;
+      }
+      
+      if (chr == '"') {
+        str = true;
+        
+        if (!buf.isEmpty()) {
+          args.add(buf);
+          buf = "";
+        }
+        
+        continue;
+      }
+      
+      if (chr == ' ') {
+        if (!buf.isEmpty()) {
+          args.add(buf);
+          buf = "";
+        }
+        
+        continue;
+      }
+      
+      buf += chr;
+    }
+    
+    if (!buf.isEmpty())
+      args.add(buf);
+    
+    return (String[]) args.toArray();
   }
-
+  
   /**
-   * @return the activationRule
-   */
-  public PluginActivationRule getActivationRule() {
-    return activationRule;
-  }
-
-  /**
-   * @param activationRule
-   *            the activationRule to set
-   */
-  protected void setActivationRule(PluginActivationRule activationRule) {
-    this.activationRule = activationRule;
-  }
-
-  /**
-   * The message which triggered the execution of this plugin
+   * formats the dashed plugin-name to a camelcased class-name
    * 
-   * @return the message
+   * example: "foo-bar" -> "FooBar"
+   * 
+   * @param name
+   * @param pgk
+   * @return
    */
-  public Message getMessage() {
-    return message;
+  protected static String pluginToClassName(String name, String pgk)
+  {
+    try {
+    String[] parts = ("-" + name).split("-");
+    int len = parts.length;
+    
+    String res = "";
+    
+    for (int i = 1; i < len; i++)
+      res += Character.toUpperCase(parts[i].charAt(0)) + parts[i].substring(1);
+        
+    return pgk + "." + res;
+    } catch (Exception e) {
+      Logger.info(e.getMessage());
+      return null;
+    }
   }
-
 }

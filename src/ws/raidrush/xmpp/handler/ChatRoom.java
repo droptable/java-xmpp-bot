@@ -1,7 +1,6 @@
 package ws.raidrush.xmpp.handler;
 
-import java.util.Stack;
-import java.util.HashMap;
+import java.util.HashSet;
 
 import org.jivesoftware.smack.PacketListener;
 import org.jivesoftware.smack.packet.Message;
@@ -22,25 +21,38 @@ public class ChatRoom implements PacketListener
   protected MultiUserChat room;
   
   // our nick in that room
-  protected String nick;
+  protected String nick, ident;
   
   // the trigger we should handle
   protected String trigger;
   protected int tlength;
   
   // filters and commands
-  protected Stack<Plugin> filters;
-  protected HashMap<String, Plugin> commands;
+  protected HashSet<String> filters;
+  protected HashSet<String> commands;
   
+  /**
+   * constructor
+   * 
+   * @param client
+   * @param room
+   * @param nick
+   * @param trigger
+   */
   public ChatRoom(Client client, MultiUserChat room, String nick, String trigger) 
   {
     this.client = client;
     this.room   = room;
     this.nick   = nick;
+    this.ident  = this.room.getRoom() + "/" + this.nick;
     
     this.trigger = trigger;
     this.tlength = trigger.length();
     
+    this.filters  = new HashSet<String>();
+    this.commands = new HashSet<String>();
+    
+    this.commands.add("echo");
     
     Logger.info("handler for room " + this.room.getRoom() + " created");
   }
@@ -51,102 +63,71 @@ public class ChatRoom implements PacketListener
     if (!(pack instanceof Message))
       return;
     
-    Message msg = (Message) pack;
-    String body = msg.getBody();
+    final Message msg = (Message) pack;
+    final String body = msg.getBody();
+    String from = msg.getFrom();
     
-    Logger.info(msg.getFrom() + " wrote a message in " + this.room.getRoom() + ": " + msg.getBody());
+    if (from.equals(this.ident))
+      return;
+    
+    Logger.info(from + " wrote a message in " + this.room.getRoom() + ": " + msg.getBody());
     
     if (body.length() > this.tlength) {
       // apply trigger (active plugins)
       String pre = body.substring(0, this.tlength);
+      Logger.info("is this a trigger? '" + pre + "'");
       
       if (pre.equals(this.trigger)) {
-        String exec = body.substring(body.indexOf(" "))
-            .substring(0, this.tlength).toLowerCase();
+        String exec = body.substring(this.tlength, body.indexOf(" ")).toLowerCase();
         
-        if (this.commands.containsKey(exec)) {
-          // parse message and lookup command
-          Plugin cmd = this.commands.get(exec);
-          // cmd.execute(); ?
-          
+        if (exec.equals("load")) {
+          Plugin.load(body.substring(body.indexOf(" ") + 1).trim());
           return;
+        }
+        
+        Logger.info("check if plugin is registred in this chat: '" + exec + "'");
+        
+        if (this.commands.contains(exec)) {
+          Logger.info("command is available!");
+          
+          final Plugin cmd = Plugin.get(exec, Plugin.Type.ACTIVE);
+          
+          if (cmd != null) {
+            Logger.info("plugin is ready!");
+            this.execute(cmd, msg, body.substring(body.indexOf(" ") + 1));
+            return;
+          }
         }
       }
     }
     
     // apply filters (passive plugins)
-    for (Plugin flt : this.filters)
-      ; // flt.execute(); ?
+    for (String flt : this.filters)
+      this.execute(Plugin.get(flt, Plugin.Type.PASSIVE), msg, body);
   }
   
-  protected String[] parseArguments(String text)
+  /**
+   * executes a plugin
+   * 
+   * @param plugin
+   * @param msg
+   * @param body
+   */
+  private void execute(final Plugin plugin, final Message msg, final String body) 
   {
-    Stack<String> args = new Stack<String>();
+    Logger.info("executing plugin");
     
-    int     len = text.length();
-    boolean str = false;
-    String  buf = "";
+    final ChatRoom self = this;
     
-    for (int i = 0; i < len; ++i) {
-      char chr = text.charAt(i);
-      
-      // § if a string-literal is open
-      if (str == true) {
-        // § if the next char is a quotation mark
-        if (chr == '"') {
-          // § close the string-literal and wait for a whitespace char, quotation mark or EOF
-          str = false;
-          continue;
+    // start plugin in a new thread
+    (new Thread(
+        new Runnable() {
+          @Override 
+          public void run() { plugin.execute(msg, body, room, self); } 
         }
-        
-        // § append char to buffer and continue with next char
-        buf += chr;
-        continue;
-      }
-      
-      // § if a string-literal is not open and the next char is a quotation mark
-      if (chr == '"') {
-        // § open string-literal
-        str = true;
-        
-        // § if the current buffer is not empty
-        if (!buf.isEmpty()) {
-          // § push it onto the stack
-          args.add(buf);
-          buf = "";
-        }
-        
-        // § continue with next char
-        continue;
-      }
-      
-      // § if a string-literal is not open and the next char is a whitespace char
-      if (chr == ' ') {
-        // § if the current buffer is not empty
-        if (!buf.isEmpty()) {
-          // § push it onto the stack
-          args.add(buf);
-          buf = "";
-        }
-        
-        // § continue with next char
-        continue;
-      }
-      
-      // § if a string-literal is not open and next char is not a whitespace char
-      // § add it to the current buffer
-      buf += chr;
-    }
-    
-    // § if EOF is reached and buffer is not empty
-    if (!buf.isEmpty())
-      // § push it onto the stack
-      args.add(buf);
-    
-    // § done
-    return (String[]) args.toArray();
+    )).start();
   }
-  
+
   /**
    * returns the nick used in the chat-room
    * 
@@ -175,6 +156,16 @@ public class ChatRoom implements PacketListener
   public MultiUserChat getChat()
   {
     return this.room;
+  }
+  
+  /**
+   * returns the client
+   * 
+   * @return Client
+   */
+  public Client getClient()
+  {
+    return this.client;
   }
   
   /**

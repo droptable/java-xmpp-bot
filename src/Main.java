@@ -37,7 +37,7 @@ public class Main
     
     client
       .join("#rr-coding@conference.jabber.ccc.de", "!")
-      .join("#raidrush@conference.jabber.ccc.de", "!", "~rrbot")
+      //.join("#raidrush@conference.jabber.ccc.de", "!", "~rrbot")
       .listen();
   }
 }
