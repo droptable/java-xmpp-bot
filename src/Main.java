@@ -25,7 +25,7 @@ public class Main
     Client client;
     
     try {
-      client = new Client("quote2", "geheim1234", "jabber.ccc.de", 5222);
+      client = new Client(...);
       client.connect();
     } catch (Exception e) {
       Logger.error(e.getMessage());
