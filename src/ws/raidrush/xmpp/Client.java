@@ -2,422 +2,566 @@ package ws.raidrush.xmpp;
 
 import java.util.Stack;
 import java.util.HashMap;
+import java.util.HashSet;
 
-import ws.raidrush.xmpp.handler.ChatRoom;
-import ws.raidrush.xmpp.handler.ChatQuery;
+import org.apache.log4j.Logger;
 
+import org.jivesoftware.smack.Chat;
+import org.jivesoftware.smack.ChatManagerListener;
+import org.jivesoftware.smack.ConnectionConfiguration;
+import org.jivesoftware.smack.MessageListener;
+import org.jivesoftware.smack.PacketListener;
 import org.jivesoftware.smack.Roster;
 import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
-import org.jivesoftware.smack.ConnectionConfiguration;
-import org.jivesoftware.smack.packet.Presence;
-
-import org.jivesoftware.smackx.muc.MultiUserChat;
+import org.jivesoftware.smack.packet.Message;
+import org.jivesoftware.smack.packet.Packet;
 import org.jivesoftware.smackx.muc.DiscussionHistory;
+import org.jivesoftware.smackx.muc.MultiUserChat;
 
-public class Client
+import ws.raidrush.xmpp.utils.Task;
+
+@SuppressWarnings("unused")
+public class Client implements MessageListener, ChatManagerListener
 {
-  // connection handle
-  protected XMPPConnection xmpp;
+  //xmpp-connection
+  private final XMPPConnection xmpp;
   
-  // our chat rooms
-  protected HashMap<String, ChatRoom> mucs;
-  protected HashMap<String, String>   nicks;
+  // database storage
+  private final Storage storage;
   
-  // some informations about this client
-  protected String user, pass, auth;
+  // host, username and password for login
+  private final String host, user, pass;
   
-  // ready or not?
-  protected boolean ready = false;
+  // resource used for login
+  private String resource;
   
-  // stuff to do before the client is ready
-  protected Stack<Runnable> queue;
+  // port for login
+  private final int port;
   
-  // auto-reconnect
-  protected boolean reconnect = false;
+  // indicator that the client is ready to take actions
+  private boolean ready = false;
   
-  // user-requested disconnect to prevent reconnect
-  protected boolean shutdown = false;
+  // true if the client should reconnect if a connection gets lost
+  public boolean autoReconnect = true;
   
-  // if listen(true): this thread runs the main-loop
-  protected Thread master = null;
+  // queue with actions waiting for `ready` to become true
+  private final Stack<Task> tasks;
+  
+  // multi-user-chats
+  private final HashMap<String, MultiUserChat> rooms;
+  
+  // loaded plugin-models
+  private final HashMap<String, Class<Plugin>> pluginModels;
+  
+  // plugin lookup cache to prevent loading non-existent plugins twice 
+  private final HashSet<String> pluginLookup;
+  
+  // a simple map with enabled commands for rooms
+  private final HashMap<String, HashMap<String, Plugin>> roomPluginMap;
+  
+  // a simple map with enabled commands for rooms
+  private final HashSet<String> commands;
   
   /**
-   * constructor
+   * Initializes a new CLient and XMPPConnection
+   * 
+   * @param host
+   * @param port
+   */
+  public Client(String host, int port, String user, String pass)
+  {
+    super();
+    
+    //save setup for reconnect
+    this.host = host;
+    this.port = port;
+    this.user = user;
+    this.pass = pass;
+    
+    // init xmpp
+    ConnectionConfiguration config = new ConnectionConfiguration(host, port);
+    config.setSendPresence(true);
+    
+    xmpp = new XMPPConnection(config);
+    xmpp.getRoster().setSubscriptionMode(Roster.SubscriptionMode.accept_all);
+    xmpp.getChatManager().addChatListener(this);
+    
+    // init tasks and rooms
+    tasks = new Stack<Task>();
+    rooms = new HashMap<String, MultiUserChat>();
+    
+    // init storage and command lookup
+    storage  = new Storage();
+    commands = new HashSet<String>();
+    
+    // init plugin-models and lookup
+    pluginModels = new HashMap<String, Class<Plugin>>();
+    pluginLookup = new HashSet<String>();
+    
+    // init room-plugin-map
+    roomPluginMap = new HashMap<String, HashMap<String, Plugin>>();
+  }
+  
+  /**
+   * Forwards to {@link XMPPConnection#connect()}
+   * 
+   * @return Client
+   * @throws XMPPException
+   */
+  public Client connect() throws XMPPException
+  {
+    if (xmpp.isConnected())
+      return this;
+    
+    Logger.getRootLogger().info("Connecting ...");
+    xmpp.connect();
+    Logger.getRootLogger().info("Connected!");
+    
+    return this;
+  }
+  
+  /**
+   * Forwards to {@link XMPPConnection#login(String, String)}
    * 
    * @param user
    * @param pass
-   * @param auth
-   * @param port
-   */
-  public Client(String user, String pass, String auth, int port)
-  {
-    this.user = user;
-    this.auth = auth;
-    this.pass = pass;
-    
-    this.mucs  = new HashMap<String, ChatRoom>();
-    this.nicks = new HashMap<String, String>();
-    this.queue = new Stack<Runnable>();
-    
-    // prepare connection
-    ConnectionConfiguration config = new ConnectionConfiguration(auth, port);
-    // config.setSendPresence(true);
-    
-    this.xmpp = new XMPPConnection(config);
-    
-    // auto-subscribes to everything, because we love you all :-D
-    this.xmpp.getRoster().setSubscriptionMode(Roster.SubscriptionMode.accept_all);
-    
-    // handle private messages
-    this.xmpp.getChatManager().addChatListener(new ChatQuery(this));
-  }
-  
-  public XMPPConnection getXMPP() { return this.xmpp; }
-  public String getUser() { return this.user; }
-  
-  /**
-   * trys to find the JID from a user an a room
-   * 
-   * @param nick
-   * @param room
-   */
-  public String getUserJid(String nick, String room)
-  {
-    Logger.info("fetching jid for " + nick + " in room " + room);
-    
-    for (String key : this.mucs.keySet())
-      Logger.info(key);
-    
-    if (!this.mucs.containsKey(room)) {
-      Logger.info("client is not in this room!");
-      return null;
-    }
-    
-    return this.mucs.get(room).getUserJid(nick);
-  }
-  
-  /**
-   * trys to find the JID from a user in the contact-manager
-   * 
-   * @param nick
-   * @return String
-   */
-  public String getUserJid(String nick)
-  {
-    // remove resource
-    int res = nick.indexOf("/");
-    if (res > -1) nick = nick.substring(0, res);
-    
-    Logger.info("fetching jid for " + nick);
-    
-    Roster roster = this.xmpp.getRoster();
-    
-    if (!roster.contains(nick))
-      return null;
-    
-    return roster.getEntry(nick).getUser();
-  }
-  
-  /**
-   * returns a joined room
-   * 
-   * @param room
-   * @return ChatRoom
-   */
-  public ChatRoom getRoom(String room)
-  {
-    if (this.mucs.containsKey(room))
-      return this.mucs.get(room);
-    
-    return null;
-  }
-  
-  /**
-   * setter for `reconnect`
-   * 
-   * @param rc
    * @return
-   */
-  public Client setReconnect(boolean rc)
-  {
-    this.reconnect = true;
-    return this;
-  }
-  
-  /**
-   * getter for `reconnect`
-   * 
-   * @return
-   */
-  public boolean getReconnect()
-  {
-    return this.reconnect;
-  }
-  
-  /**
-   * adds a task
-   * 
-   * @param task
-   */
-  public void addTask(Runnable task)
-  {
-    this.queue.add(task);
-  }
-  
-  /**
-   * forwarded to {@link XMPPConnection#connect()}
-   * 
    * @throws XMPPException
    */
-  public void connect() throws XMPPException
+  public Client login(String resource) throws XMPPException 
   {
-    Logger.info("connecting ...");
-    xmpp.connect();
-  }
-  
-  /**
-   * disconnects the bot
-   * 
-   * @param msg
-   */
-  public void disconnect(String msg)
-  {
-    Logger.info("disconnecting (shutdown)");
-    
-    this.shutdown = true;
-    
-    if (this.master != null)
-      this.master.interrupt();
-    
-    this.ready = false;
-    
-    if (msg != null) {
-      Presence pres = new Presence(Presence.Type.unavailable, msg, 0, Presence.Mode.away);
-      this.xmpp.disconnect(pres);
-    } else
-      this.xmpp.disconnect();
-    
-    // reset, maybe you want to reuse this client
-    this.shutdown = false;
-  }
-  
-  /**
-   * leaves a chat-room
-   * 
-   * @param room
-   */
-  public Client leave(MultiUserChat room)
-  {
-    String name = room.getRoom();
-    Logger.info("leaving " + name);
-    Logger.info("a = joined: " + (room.isJoined() ? "a" : "b"));
-    
-    if (!this.mucs.containsKey(name))
+    if (xmpp.isAuthenticated())
       return this;
     
-    //room.removeMessageListener(this.mucs.get(name));
+    Logger.getRootLogger().info("Sending logindata ...");
     
-    try {
-      room.leave();
-    } catch (Exception e) {
-      System.out.println(e.getMessage());
-    }
+    // save for reconnect
+    this.resource = resource;
     
-    this.mucs.remove(name);
+    xmpp.login(user, pass, this.resource);
+    ready = true;
+    
+    Logger.getRootLogger().info("Login successful!");
+    
+    for (Task task : tasks)
+      task.executeSilent();
+    
+    tasks.clear();
     return this;
   }
   
   /**
-   * forwarded to {@link Client#join(String, String, String, String)}
-   * 
-   * @param room
-   * @return Client
-   */
-  public Client join(String room, String trigger)
-  {
-    join(room, trigger, this.user, "");
-    return this;
-  }
-  
-  /**
-   * forwarded to {@link Client#join(String, String, String, String)}
-   * 
-   * @param room
-   * @param nick
-   * @return Client
-   */
-  public Client join(String room, String trigger, String nick)
-  {
-    join(room, trigger, nick, "");
-    return this;
-  }
-  
-  /**
-   * joins a MultiUserChat room
+   * Joins a {@link MultiUserChat} and adds it to the room-manager
    * 
    * @param room
    * @param nick
    * @param pass
-   * @return Client
+   * @param trigger
+   * @return
    */
-  public synchronized Client join(final String room, final String trigger, final String nick, final String pass)
+  public Client join(final String room, final String nick, final String pass, final String trigger)
   {
-    if (mucs.containsKey(room)) {
-      Logger.info("already joined muc " + room + " with nick \"" 
-          + mucs.get(room).getNick() + "\"");
-      
-      return this;
-    }
-    
-    final Client self = this;
-    
-    Runnable task = new Runnable() {
-      @Override 
-      public void run() 
+    Task task = new Task("join-room-" + room) {
+      @Override
+      protected void perform()
       {
-        MultiUserChat muc = new MultiUserChat(xmpp, room);
-        ChatRoom      rmh = new ChatRoom(self, muc, nick, trigger);
+        final MultiUserChat muc = new MultiUserChat(xmpp, room);
         
-        muc.addMessageListener(rmh);
-        
-        mucs.put(room, rmh);
+        // create history to prevent delayed messages
+        DiscussionHistory dh = new DiscussionHistory();
+        dh.setMaxChars(0);
+        dh.setMaxStanzas(0);
         
         try {
-          DiscussionHistory dh = new DiscussionHistory();
-          dh.setMaxChars(0);
           muc.join(nick, pass, dh, 2000);
+          
+          // add room to list -of-rooms
+          rooms.put(room, muc);
+          
+          // create plugin-entry
+          roomPluginMap.put(room, new HashMap<String, Plugin>());
+          enablePlugin(room, "echo");
+          
+          Logger.getRootLogger().info("Joined room \"" + room + "\"");
         } catch (XMPPException e) {
-          Logger.error("unable to join muc " + room);
-          Logger.error(e.getMessage());
+          Logger.getRootLogger().error("Unable to join room \"" + room + "\"", e);
           return;
-        } finally {        
-          Logger.info("joined room " + room);
         }
+        
+        // save trigger-length
+        final int tlength = trigger.length();
+        
+        muc.addMessageListener(new PacketListener() {          
+          @Override
+          public void processPacket(Packet packet)
+          {
+            if (!(packet instanceof Message))
+              return;
+            
+            Message message = (Message) packet;
+            
+            if (message.getFrom().equals(room + "/" + muc.getNickname()))
+              return;
+            
+            Logger.getRootLogger().info("Got a message in " + room);
+            
+            String body = message.getBody().trim();
+            
+            // check if message starts with `trigger`
+            if (body.length() > tlength && body.substring(0, tlength).equals(trigger)) {
+              Logger.getRootLogger().info("Plugin requested: " + body);
+              
+              String name = body.substring(tlength), args = "";
+              
+              int wspos = name.indexOf(" ");
+              
+              if (wspos > -1) {
+                args = name.substring(wspos).trim();
+                name = name.substring(0, wspos).trim();
+              }
+              
+              name = name.toLowerCase();
+              
+              // best logging expressions evarr!!
+              Logger.getRootLogger().info("Command \"" + name + "\" is " 
+                  + (commands.contains(name) ? "" : "not ") + "availabe");
+              
+              Logger.getRootLogger().info("The room \"" + room + "\" has " 
+                  + (roomPluginMap.get(room).containsKey(name) ? "" : "no ") 
+                  + "access to this command");
+              
+              if (commands.contains(name) && roomPluginMap.get(room).containsKey(name)) {
+                try {
+                  Logger.getRootLogger().info("Executing plugin \"" + name + "\" with arguments: " + args);
+                  
+                  // why? because f**k you, thats why :-P
+                  ((Command) roomPluginMap.get(room).get(name)).execute(message, args);
+                  
+                  // note: filters are attached as listener
+                  
+                } catch (Exception e) {
+                  Logger.getRootLogger().error("Error while executing plugin \"" + name + "\"", e);
+                }
+              }
+            }
+          }
+        });
       }
     };
     
-    if (this.ready != true) 
-      this.queue.add(task);
-    else
-      task.run();
-    
+    addTask(task);
     return this;
+    
+    // beerCount++
+    // beerCount++
   }
   
   /**
-   * forwarded to {@link XMPPConnection#login(String, String)}
+   * Leaves a room
    * 
-   * @return Client
+   * @param room
+   * @return
    */
-  public Client login()
+  public Client leave(String room)
   {
-    if (this.xmpp.isAuthenticated()) {
-      Logger.info("already logged in");
+    if (!rooms.containsKey(room))
       return this;
-    }
     
-    try {
-      this.xmpp.login(this.user, this.pass);
-      Logger.info("login successful");
-      
-      // apply tasks
-      for (Runnable task : this.queue)
-        task.run();
-      
-      this.queue.clear();
-    } catch (XMPPException e) {
-      Logger.warn("login failed");
-      Logger.warn(e.getMessage());
-    }
+    MultiUserChat muc = rooms.get(room);
+    muc.leave();
     
-    this.ready = true;
+    // remove room from room-map
+    rooms.remove(room);
+    
+    // remove room from plugin-map and let the GC do the rest
+    roomPluginMap.remove(room);
+    
     return this;
   }
   
   /**
-   * forwarded to {@link Client#listen(boolean)}
+   * starts the main-loop and handles reconnection/shutdown
    * 
    * @void
    */
   public void listen()
   {
-    this.listen(false);
-  }
-  
-  /**
-   * starts the main-loop
-   * 
-   * @param bgp
-   */
-  public void listen(final boolean bgp)
-  {
-    if (this.ready != true)
-      this.login();
-    
-    final Client self = this;
-    
-    Runnable loop = new Runnable() {
+    Task task = new Task("client-listener") {
       @Override
-      public void run()
+      protected void perform()
       {
         for (;;) {
-          // block
           if (!xmpp.isConnected())
             break;
           
           try {
             Thread.sleep(10000);
           } catch (InterruptedException e) {
-            Logger.fatal("unable to sleep! i need a break, good bye");
-            return;
+            Logger.getRootLogger().error("Unable to sleep", e);
+            return; // note: return, not break
           }
         }
         
-        Logger.info("connection lost");
+        Logger.getRootLogger().info("Connection lost");
         
-        if (self.shutdown == true)
-          return; // disconnect was requested
-        
-        if (self.reconnect == true) {
-          boolean okay = false;
-          
-          Logger.info("trying to reconnect");
-          
-          for (int i = 0; i < 10; ++i) {
-            try {
-              self.connect();
-              okay = true;
-              break;
-            } catch (XMPPException e) {
-              int next = 10000 * i;
-              Logger.warn("reconnect failed, waiting " + next + " seconds for next attempt");
-              
-              try {
-                Thread.sleep(next);
-              } catch (InterruptedException e1) {
-                Logger.fatal("unable to sleep");
-                return;
-              }
-            }
-          }
-          
-          if (okay == false) {
-            Logger.error("unable to reconnect. server might be down");
-            return;
-          }
-          
-          self.listen(bgp);
+        if (!autoReconnect)
+          return;
+                
+        try {
+          // wait a bit
+          Thread.sleep(10000);
+        } catch (InterruptedException e) {
+          Logger.getRootLogger().error("Unable to sleep", e);
+          return;
         }
+        
+        if (!reconnect()) 
+          return;
+        
+        perform(); // reuse task instead of creating a new one!
       }
     };
     
-    if (bgp == false) {
-      loop.run();
-      return;
+    addTask(task);
+  }
+  
+  /**
+   * Enables a plugin (or filter) in a room
+   * 
+   * @param room
+   * @param name
+   */
+  @SuppressWarnings("unchecked")
+  public Client enablePlugin(String room, String name)
+  {
+    if (!rooms.containsKey(room)) {
+      Logger.getRootLogger().warn("Can not load plugin for a unknown chat-room");
+      return this;
     }
     
-    this.master = new Thread(loop);
-    this.master.start();
+    if (pluginLookup.contains(name)) {
+      Logger.getRootLogger().warn("Plugin \"" + name + "\" was not found (cached)");
+      return this;
+    }
+    
+    Class<Plugin> pluginModel;
+    
+    if (pluginModels.containsKey(name)) {
+      pluginModel = pluginModels.get(name);
+      Logger.getRootLogger().info("Plugin successful loaded (cached)");
+    } else {
+      try {
+        String[] nameParts = name.split("-");
+        
+        String  className = "ws.raidrush.xmpp.plugins.",
+                upperName = "";
+        
+        for (int i = 0, l = nameParts.length; i < l; ++i)
+          upperName += nameParts[i].substring(0, 1).toUpperCase() + nameParts[i].substring(1);
+        
+        className += upperName;
+        Logger.getRootLogger().info("Loading plugin \"" + name + "\" from package " + className);
+        
+        try {
+          pluginModel = (Class<Plugin>) ClassLoader.getSystemClassLoader().loadClass(className);
+          Logger.getRootLogger().info("Plugin successful loaded");
+        } catch (ClassNotFoundException e) {
+          Logger.getRootLogger().warn("Unable to load plugin");
+          pluginLookup.add(name);
+          return this;
+        }
+      
+        // can this happen?
+        if (pluginModel == null) {
+          Logger.getRootLogger().error("Unable to load plugin: ClassLoader returned NULL");
+          pluginLookup.add(name);
+          return this;
+        }
+        
+        pluginModels.put(name, pluginModel);
+      } catch (Exception e) {
+        Logger.getRootLogger().error("Error while loading plugin", e);
+        return this;
+      }
+    }
+    
+    // loading is done, lets get an instance
+    
+    Plugin plugin;
+    
+    try {
+      plugin = (Plugin) pluginModel.getConstructors()[0]
+          .newInstance(this, rooms.get(room));
+      
+      Logger.getRootLogger().info("Plugin successful contructed");
+    } catch (Exception e) {
+      Logger.getRootLogger().error("Error while constructing plugin", e);
+      return this;
+    }
+    
+    if (plugin instanceof Filter) {
+      ((Filter) plugin).attach();
+      Logger.getRootLogger().info("Plugin \"" + name + "\" added as filter");
+    } else if(plugin instanceof Command) {
+      commands.add(name);
+      Logger.getRootLogger().info("Plugin \"" + name + "\" added as command");
+    }
+    
+    roomPluginMap.get(room).put(name, plugin);
+    return this;
+    
+    // beerCount++
+  }
+  
+  /**
+   * Disables a plugin (or filter) in a room
+   * 
+   * 
+   */
+  public Client disablePlugin(String room, String name)
+  {
+    if (!rooms.containsKey(room)) {
+      Logger.getRootLogger().warn("Can not unload plugin for a unknown chat-room");
+      return this;
+    }
+    
+    if (!roomPluginMap.get(room).containsKey(name))
+      return this;
+    
+    Plugin plugin = roomPluginMap.get(room).get(name);
+   
+    if (plugin instanceof Filter)
+      ((Filter) plugin).remove();
+    
+    // remove plugin and let GC do the rest
+    roomPluginMap.get(room).remove(name);    
+    return this;
+  }
+  
+  /**
+   * TODO implement storage first!
+   * 
+   * - connect
+   * - login
+   * - join all channels
+   * -------------------------
+   * Storage needed:
+   * - add plugins to channels
+   * 
+   * @return true if everything was successful, false if not
+   */
+  protected boolean reconnect()
+  {
+    
+    return false;
+    
+    /*
+    boolean connected = false, loggedin = false;
+    
+    // ------------------------------------------
+    // connect
+    
+    Logger.getRootLogger().info("Reconnecting ...");
+    
+    for (int i = 1; i < 11; ++i) {
+      Logger.getRootLogger().info("Connect attempt #" + i);
+      
+      try {
+        connect();
+        connected = true;
+        Logger.getRootLogger().info("Connected!");
+        break;
+      } catch (XMPPException e) {
+        Logger.getRootLogger().error("Reconnect failed ...", e);
+        
+        try {
+          Thread.sleep(i * 10000);
+        } catch (InterruptedException e1) {
+          Logger.getRootLogger().error("Unable to sleep", e);
+          return false;
+        }
+      }
+    }
+    
+    if (!connected) {
+      Logger.getRootLogger().error("Reconnect aborted");
+      return false;
+    }
+    
+    // ------------------------------------------
+    // login
+    
+    Logger.getRootLogger().info("Logging in ...");
+    
+    for (int i = 1; i < 11; ++i) {
+      Logger.getRootLogger().info("Login attempt #" + i);
+      
+      try {
+        login(resource);
+        loggedin = true;
+        Logger.getRootLogger().info("Login successful");
+        break;
+      } catch (XMPPException e) {
+        Logger.getRootLogger().error("Unable to login ...", e);
+        
+        try {
+          Thread.sleep(i * 10000);
+        } catch (InterruptedException e1) {
+          Logger.getRootLogger().error("Unable to sleep", e);
+          return false;
+        }
+      }
+    }
+    
+    if (!loggedin) {
+      Logger.getRootLogger().error("Login aborted");
+      return false;
+    }
+    
+    Logger.getRootLogger().info("Connection successfuly re-established");
+    
+    // join channels
+    
+    
+    return true;
+    */
+  }
+  
+  /**
+   * adds a task to the task-queue or automatically executes it of the client is ready
+   * 
+   * @param task
+   */
+  public Client addTask(Task task)
+  {
+    if (ready == true) {
+      task.executeSilent();      
+      return this;
+    }
+    
+    tasks.add(task);
+    Logger.getRootLogger().info("Added task \"" + task.getIdent() + "\"");
+    
+    return this;
+  }
+  
+  @Override
+  public void processMessage(Chat chat, Message message)
+  {
+    // testing
+    
+    try {
+      chat.sendMessage("hello world");
+    } catch (XMPPException e) {
+      Logger.getRootLogger().error("Unable to send message back to user", e);
+    }
+  }
+
+  @Override
+  public void chatCreated(Chat chat, boolean createdLocally)
+  {
+    // add client as message listener
+    chat.addMessageListener(this);
   }
 }

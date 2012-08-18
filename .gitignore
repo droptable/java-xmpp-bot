@@ -1,7 +1,12 @@
 bin/
+old/
 assets/
 .classpath
 .project
 .settings
+xmppbot.db
 
 /src/Main.java
+
+/libs/source
+/libs/javadoc
