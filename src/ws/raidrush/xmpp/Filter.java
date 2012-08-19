@@ -3,7 +3,6 @@ package ws.raidrush.xmpp;
 import org.jivesoftware.smack.PacketListener;
 import org.jivesoftware.smack.packet.Message;
 import org.jivesoftware.smack.packet.Packet;
-import org.jivesoftware.smackx.muc.MultiUserChat;
 
 abstract public class Filter extends Plugin implements PacketListener
 {
@@ -15,7 +14,7 @@ abstract public class Filter extends Plugin implements PacketListener
    * @param client
    * @param chat
    */
-  public Filter(Client client, MultiUserChat chat) { super(client, chat); }
+  public Filter(ManagedMultiUserChat chat) { super(chat); }
   
   /**
    * Adds itself as MessageListener
@@ -49,7 +48,12 @@ abstract public class Filter extends Plugin implements PacketListener
     if (!(packet instanceof Message))
       return;
     
-    perform((Message) packet);
+    Message msg = (Message) packet;
+    
+    if (msg.getFrom().equals(chat.getRoom() + "/" + chat.getNickname()))
+      return;
+    
+    perform(msg);
   }
   
   /**

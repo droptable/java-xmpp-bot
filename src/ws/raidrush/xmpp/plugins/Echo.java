@@ -3,14 +3,13 @@ package ws.raidrush.xmpp.plugins;
 import org.apache.log4j.Logger;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.packet.Message;
-import org.jivesoftware.smackx.muc.MultiUserChat;
 
-import ws.raidrush.xmpp.Client;
 import ws.raidrush.xmpp.Command;
+import ws.raidrush.xmpp.ManagedMultiUserChat;
 
 public class Echo extends Command
 {
-  public Echo(Client client, MultiUserChat chat) { super(client, chat); }
+  public Echo(ManagedMultiUserChat chat) { super(chat); }
 
   @Override
   protected void perform(Message msg, String body)

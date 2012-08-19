@@ -8,6 +8,7 @@ import org.apache.log4j.Logger;
 
 import org.jivesoftware.smack.Chat;
 import org.jivesoftware.smack.ChatManagerListener;
+import org.jivesoftware.smack.Connection;
 import org.jivesoftware.smack.ConnectionConfiguration;
 import org.jivesoftware.smack.MessageListener;
 import org.jivesoftware.smack.PacketListener;
@@ -20,6 +21,7 @@ import org.jivesoftware.smackx.muc.DiscussionHistory;
 import org.jivesoftware.smackx.muc.MultiUserChat;
 
 import ws.raidrush.xmpp.utils.Task;
+import ws.raidrush.xmpp.utils.AdminUtil;
 
 @SuppressWarnings("unused")
 public class Client implements MessageListener, ChatManagerListener
@@ -49,19 +51,13 @@ public class Client implements MessageListener, ChatManagerListener
   private final Stack<Task> tasks;
   
   // multi-user-chats
-  private final HashMap<String, MultiUserChat> rooms;
+  private final HashMap<String, ManagedMultiUserChat> rooms;
   
   // loaded plugin-models
   private final HashMap<String, Class<Plugin>> pluginModels;
   
   // plugin lookup cache to prevent loading non-existent plugins twice 
   private final HashSet<String> pluginLookup;
-  
-  // a simple map with enabled commands for rooms
-  private final HashMap<String, HashMap<String, Plugin>> roomPluginMap;
-  
-  // a simple map with enabled commands for rooms
-  private final HashSet<String> commands;
   
   /**
    * Initializes a new CLient and XMPPConnection
@@ -89,18 +85,14 @@ public class Client implements MessageListener, ChatManagerListener
     
     // init tasks and rooms
     tasks = new Stack<Task>();
-    rooms = new HashMap<String, MultiUserChat>();
+    rooms = new HashMap<String, ManagedMultiUserChat>();
     
-    // init storage and command lookup
+    // init storage
     storage  = new Storage();
-    commands = new HashSet<String>();
     
     // init plugin-models and lookup
     pluginModels = new HashMap<String, Class<Plugin>>();
     pluginLookup = new HashSet<String>();
-    
-    // init room-plugin-map
-    roomPluginMap = new HashMap<String, HashMap<String, Plugin>>();
   }
   
   /**
@@ -152,7 +144,7 @@ public class Client implements MessageListener, ChatManagerListener
   }
   
   /**
-   * Joins a {@link MultiUserChat} and adds it to the room-manager
+   * Joins a {@link ManagedMultiUserChat} and adds it to the room-manager
    * 
    * @param room
    * @param nick
@@ -166,7 +158,7 @@ public class Client implements MessageListener, ChatManagerListener
       @Override
       protected void perform()
       {
-        final MultiUserChat muc = new MultiUserChat(xmpp, room);
+        ManagedMultiUserChat mmuc = new ManagedMultiUserChat(Client.this, xmpp, room, trigger);
         
         // create history to prevent delayed messages
         DiscussionHistory dh = new DiscussionHistory();
@@ -174,79 +166,16 @@ public class Client implements MessageListener, ChatManagerListener
         dh.setMaxStanzas(0);
         
         try {
-          muc.join(nick, pass, dh, 2000);
+          mmuc.join(nick, pass, dh, 2000);
           
           // add room to list -of-rooms
-          rooms.put(room, muc);
-          
-          // create plugin-entry
-          roomPluginMap.put(room, new HashMap<String, Plugin>());
-          enablePlugin(room, "echo");
+          rooms.put(room, mmuc);
           
           Logger.getRootLogger().info("Joined room \"" + room + "\"");
         } catch (XMPPException e) {
           Logger.getRootLogger().error("Unable to join room \"" + room + "\"", e);
           return;
         }
-        
-        // save trigger-length
-        final int tlength = trigger.length();
-        
-        muc.addMessageListener(new PacketListener() {          
-          @Override
-          public void processPacket(Packet packet)
-          {
-            if (!(packet instanceof Message))
-              return;
-            
-            Message message = (Message) packet;
-            
-            if (message.getFrom().equals(room + "/" + muc.getNickname()))
-              return;
-            
-            Logger.getRootLogger().info("Got a message in " + room);
-            
-            String body = message.getBody().trim();
-            
-            // check if message starts with `trigger`
-            if (body.length() > tlength && body.substring(0, tlength).equals(trigger)) {
-              Logger.getRootLogger().info("Plugin requested: " + body);
-              
-              String name = body.substring(tlength), args = "";
-              
-              int wspos = name.indexOf(" ");
-              
-              if (wspos > -1) {
-                args = name.substring(wspos).trim();
-                name = name.substring(0, wspos).trim();
-              }
-              
-              name = name.toLowerCase();
-              
-              // best logging expressions evarr!!
-              Logger.getRootLogger().info("Command \"" + name + "\" is " 
-                  + (commands.contains(name) ? "" : "not ") + "availabe");
-              
-              Logger.getRootLogger().info("The room \"" + room + "\" has " 
-                  + (roomPluginMap.get(room).containsKey(name) ? "" : "no ") 
-                  + "access to this command");
-              
-              if (commands.contains(name) && roomPluginMap.get(room).containsKey(name)) {
-                try {
-                  Logger.getRootLogger().info("Executing plugin \"" + name + "\" with arguments: " + args);
-                  
-                  // why? because f**k you, thats why :-P
-                  ((Command) roomPluginMap.get(room).get(name)).execute(message, args);
-                  
-                  // note: filters are attached as listener
-                  
-                } catch (Exception e) {
-                  Logger.getRootLogger().error("Error while executing plugin \"" + name + "\"", e);
-                }
-              }
-            }
-          }
-        });
       }
     };
     
@@ -271,12 +200,8 @@ public class Client implements MessageListener, ChatManagerListener
     MultiUserChat muc = rooms.get(room);
     muc.leave();
     
-    // remove room from room-map
+    // remove room from room-map and let the GC do the rest
     rooms.remove(room);
-    
-    // remove room from plugin-map and let the GC do the rest
-    roomPluginMap.remove(room);
-    
     return this;
   }
   
@@ -389,35 +314,40 @@ public class Client implements MessageListener, ChatManagerListener
     // loading is done, lets get an instance
     
     Plugin plugin;
+    ManagedMultiUserChat mmuc = rooms.get(room);
     
     try {
-      plugin = (Plugin) pluginModel.getConstructors()[0]
-          .newInstance(this, rooms.get(room));
-      
+      plugin = (Plugin) pluginModel.getConstructors()[0].newInstance(mmuc);
       Logger.getRootLogger().info("Plugin successful contructed");
     } catch (Exception e) {
       Logger.getRootLogger().error("Error while constructing plugin", e);
       return this;
     }
-    
-    if (plugin instanceof Filter) {
-      ((Filter) plugin).attach();
-      Logger.getRootLogger().info("Plugin \"" + name + "\" added as filter");
-    } else if(plugin instanceof Command) {
-      commands.add(name);
-      Logger.getRootLogger().info("Plugin \"" + name + "\" added as command");
-    }
-    
-    roomPluginMap.get(room).put(name, plugin);
+        
+    mmuc.addPlugin(name, plugin);
     return this;
     
     // beerCount++
   }
   
   /**
+   * Enables a plugin (or filter) in all rooms
+   * 
+   * @param name
+   * @return Client
+   */
+  public Client enablePlugin(String name)
+  {
+    for (String room : rooms.keySet())
+      enablePlugin(room, name);
+    
+    return this;
+  }
+  
+  /**
    * Disables a plugin (or filter) in a room
    * 
-   * 
+   * @return Client
    */
   public Client disablePlugin(String room, String name)
   {
@@ -426,16 +356,41 @@ public class Client implements MessageListener, ChatManagerListener
       return this;
     }
     
-    if (!roomPluginMap.get(room).containsKey(name))
+    rooms.get(room).removePlugin(name);
+    return this;
+  }
+  
+  /**
+   * Disables a plugin (or filter) in all rooms
+   * 
+   * @param name
+   * @return Client
+   */
+  public Client disablePlugin(String name) 
+  {
+    for (ManagedMultiUserChat mmuc : rooms.values())
+      mmuc.removePlugin(name);
+    
+    return this;
+  }
+  
+  /**
+   * Disables a plugin (or filter) in all rooms and removes it from the plugin-list
+   * Note: Use disablePlugin() if you want re-enable it later
+   * 
+   * @param name
+   * @return
+   */
+  public Client removePlugin(String name)
+  {
+    if (!pluginModels.containsKey(name))
       return this;
     
-    Plugin plugin = roomPluginMap.get(room).get(name);
-   
-    if (plugin instanceof Filter)
-      ((Filter) plugin).remove();
+    disablePlugin(name);
     
-    // remove plugin and let GC do the rest
-    roomPluginMap.get(room).remove(name);    
+    pluginLookup.add(name);
+    pluginModels.remove(name);
+    
     return this;
   }
   

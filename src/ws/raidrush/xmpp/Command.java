@@ -1,7 +1,6 @@
 package ws.raidrush.xmpp;
 
 import org.jivesoftware.smack.packet.Message;
-import org.jivesoftware.smackx.muc.MultiUserChat;
 
 abstract public class Command extends Plugin
 {
@@ -11,7 +10,7 @@ abstract public class Command extends Plugin
    * @param client
    * @param chat
    */
-  public Command(Client client, MultiUserChat chat) { super(client, chat); }
+  public Command(ManagedMultiUserChat chat) { super(chat); }
   
   /**
    * Executes the plugin in a thread
